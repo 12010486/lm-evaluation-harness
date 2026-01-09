@@ -188,22 +188,30 @@ class HabanaLM(HFLM):
         """
         generation_kwargs["temperature"] = generation_kwargs.get("temperature", 0.0)
         do_sample = generation_kwargs.get("do_sample")
+
         if generation_kwargs.get("temperature") == 0.0 and do_sample is None:
             generation_kwargs["do_sample"] = do_sample = False
         if do_sample is False and generation_kwargs.get("temperature") == 0.0:
             generation_kwargs.pop("temperature")
+
+        max_gen_toks = max_length - context.shape[1]
+
         if self.options.static_shapes:
             self.options.bucket_internal = True
             bucket_length = self.find_bucket(context.shape[1])
             padding_length = bucket_length - context.shape[1]
-            max_gen_toks = max_length - context.shape[1]
-            if padding_length > 0 and getattr(self, "lazy_mode", False):
-                context = F.pad(
-                    context, (0, padding_length), value=self.tokenizer.pad_token_id
-                )
-                generation_kwargs["attention_mask"] = F.pad(
-                    generation_kwargs["attention_mask"], (0, padding_length), value=0
-                )
+
+            if padding_length > 0:
+                max_gen_toks = max(1, max_gen_toks)
+                if self.lazy_mode:
+                    context = F.pad(
+                        context, (0, padding_length), value=self.tokenizer.pad_token_id
+                    )
+                    generation_kwargs["attention_mask"] = F.pad(
+                        generation_kwargs["attention_mask"],
+                        (0, padding_length),
+                        value=0,
+                    )
         context = context.to(self.device)
         generation_kwargs["attention_mask"] = generation_kwargs["attention_mask"].to(
             self.device
@@ -218,7 +226,7 @@ class HabanaLM(HFLM):
                 max_new_tokens=max_gen_toks,
                 pad_token_id=self.tokenizer.pad_token_id,
                 use_cache=True,
-                hpu_graphs=getattr(self, "lazy_mode", False),  # To Simplify
-                lazy_mode=getattr(self, "lazy_mode", False),
+                hpu_graphs=self.lazy_mode,
+                lazy_mode=self.lazy_mode,
                 **generation_kwargs,
             )
