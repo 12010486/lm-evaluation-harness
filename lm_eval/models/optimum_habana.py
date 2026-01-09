@@ -42,13 +42,18 @@ class HabanaLM(HFLM):
     """
 
     def __init__(self, **kwargs) -> None:
+        # Validate required dependencies
+        if not find_spec("optimum"):
+            raise ModuleNotFoundError(
+                "package `optimum-habana` is not installed. Please install it via `pip install optimum[habana]`"
+            )
         # Validate backend
         if "backend" in kwargs:
             # currently only supports causal models
             assert kwargs["backend"] == "causal", (
                 "Currently, only AutoModelForCausalLM is supported."
             )
-        # Buckets
+        # Buckets and more opts
         self.buckets = kwargs.pop("buckets", [16, 32, 64, 128, 189, 284, 384])
         if isinstance(self.buckets, (int, str)):
             self.buckets = [self.buckets]
@@ -108,48 +113,39 @@ class HabanaLM(HFLM):
         """
         Add to the model config Intel Gaudi specific args.
         """
-        if not find_spec("optimum"):
-            raise ModuleNotFoundError(
-                "package `optimum-habana` is not installed. Please install it via `pip install optimum[habana]`"
-            )
-        else:
-            from optimum.habana.transformers.generation import GaudiGenerationConfig
+        from optimum.habana.transformers.generation import GaudiGenerationConfig
 
-            generation_config = GaudiGenerationConfig()  # copy.deepcopy(self.config)
-            generation_config.use_cache = kwargs.pop("use_kv_cache", True)
-            generation_config.static_shapes = True
-            generation_config.bucket_size = self.buckets
-            generation_config.bucket_internal = kwargs.pop("bucket_internal", True)
-            generation_config.trim_logits = kwargs.pop("trim_logits", False)
-            generation_config.attn_softmax_bf16 = kwargs.pop("attn_softmax_bf16", True)
-            generation_config.reduce_recompile = kwargs.pop("reduce_recompile", False)
-            if generation_config.reduce_recompile:
-                assert generation_config.bucket_size > 0
-            generation_config.valid_sequence_lengths = None
-            generation_config.attn_batch_split = kwargs.pop("attn_batch_split", 1)
-            generation_config.limit_hpu_graphs = kwargs.pop("limit_hpu_graphs", True)
-            generation_config.sdp_on_bf16 = kwargs.pop("sdp_on_bf16", False)
-            generation_config.clear_hpu_graphs_cache = kwargs.pop(
-                "clear_hpu_graphs_cache", True
-            )
-            generation_config.use_flex_attention = kwargs.pop(
-                "use_flex_attention", True
-            )
-            generation_config.use_flash_attention = kwargs.pop(
-                "use_flash_attention", True
-            )
-            generation_config.flash_attention_recompute = kwargs.pop(
-                "flash_attention_recompute", True
-            )
-            generation_config.flash_attention_causal_mask = kwargs.pop(
-                "flash_attention_causal_mask", True
-            )
-            generation_config.flash_attention_fast_softmax = kwargs.pop(
-                "flash_attention_fast_softmax", True
-            )
-            generation_config.reuse_cache = kwargs.pop("reuse_cache", True)
-            generation_config.ignore_eos = kwargs.pop("ignore_eos", False)
-            return generation_config, kwargs
+        generation_config = GaudiGenerationConfig()  # copy.deepcopy(self.config)
+        generation_config.use_cache = kwargs.pop("use_kv_cache", True)
+        generation_config.static_shapes = True
+        generation_config.bucket_size = self.buckets
+        generation_config.bucket_internal = kwargs.pop("bucket_internal", True)
+        generation_config.trim_logits = kwargs.pop("trim_logits", False)
+        generation_config.attn_softmax_bf16 = kwargs.pop("attn_softmax_bf16", True)
+        generation_config.reduce_recompile = kwargs.pop("reduce_recompile", False)
+        if generation_config.reduce_recompile:
+            assert generation_config.bucket_size > 0
+        generation_config.valid_sequence_lengths = None
+        generation_config.attn_batch_split = kwargs.pop("attn_batch_split", 1)
+        generation_config.limit_hpu_graphs = kwargs.pop("limit_hpu_graphs", True)
+        generation_config.sdp_on_bf16 = kwargs.pop("sdp_on_bf16", False)
+        generation_config.clear_hpu_graphs_cache = kwargs.pop(
+            "clear_hpu_graphs_cache", True
+        )
+        generation_config.use_flex_attention = kwargs.pop("use_flex_attention", True)
+        generation_config.use_flash_attention = kwargs.pop("use_flash_attention", True)
+        generation_config.flash_attention_recompute = kwargs.pop(
+            "flash_attention_recompute", True
+        )
+        generation_config.flash_attention_causal_mask = kwargs.pop(
+            "flash_attention_causal_mask", True
+        )
+        generation_config.flash_attention_fast_softmax = kwargs.pop(
+            "flash_attention_fast_softmax", True
+        )
+        generation_config.reuse_cache = kwargs.pop("reuse_cache", True)
+        generation_config.ignore_eos = kwargs.pop("ignore_eos", False)
+        return generation_config, kwargs
 
     def _create_model(self, *args, **kwargs) -> None:
         """
