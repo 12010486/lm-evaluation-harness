@@ -6,6 +6,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from lm_eval.api.instance import Instance
 from lm_eval.api.registry import register_model
 from lm_eval.models.huggingface import HFLM
 
@@ -55,6 +56,15 @@ class HabanaLM(HFLM):
         self.lazy_mode = os.getenv("PT_HPU_LAZY_MODE", "0") != "0"
         self.options, kwargs = self.setup_generation_config_gaudi(**kwargs)
         super().__init__(backend=kwargs.pop("backend", "causal"), **kwargs)
+
+    @property
+    def max_length(self) -> int:
+        # Better suits loglikelihood
+        return self._max_length if self._max_length else self.buckets[-1]
+
+    @max_length.setter
+    def max_length(self, value: int) -> None:
+        self._max_length = value
 
     def find_bucket(self, length: int, key=lambda b, length: b >= length) -> int:
         """
@@ -157,6 +167,18 @@ class HabanaLM(HFLM):
 
             self._model = wrap_in_hpu_graph(self._model)
             eval_logger.info("Model wrapped in HPU graph.")
+
+    def generate_until(
+        self, requests: list[Instance], disable_tqdm: bool = False
+    ) -> list[str]:
+        """
+        Override to change only max_length property
+        """
+        loglikelyhood_max_length = self.max_length
+        self.max_length = super().max_length
+        res = super().generate_until(requests, disable_tqdm)
+        self.max_length = loglikelyhood_max_length
+        return res
 
     def _model_generate(
         self,
