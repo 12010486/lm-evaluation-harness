@@ -55,16 +55,6 @@ class HabanaLM(HFLM):
         self.lazy_mode = os.getenv("PT_HPU_LAZY_MODE", "0") != "0"
         self.options, kwargs = self.setup_generation_config_gaudi(**kwargs)
         super().__init__(backend=kwargs.pop("backend", "causal"), **kwargs)
-        self.model_inputs = {
-            "use_cache": self.options.use_cache,
-            "reuse_cache": self.options.reuse_cache,
-            "attn_softmax_bf16": self.options.attn_softmax_bf16,
-            "use_flash_attention": self.options.use_flash_attention,
-            "flash_attention_recompute": self.options.flash_attention_recompute,
-            "flash_attention_causal_mask": self.options.flash_attention_causal_mask,
-            "flash_attention_fast_softmax": self.options.flash_attention_fast_softmax,
-            "use_flex_attention": self.options.use_flex_attention,
-        }
 
     def find_bucket(self, length: int, key=lambda b, length: b >= length) -> int:
         """
