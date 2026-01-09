@@ -22,21 +22,7 @@ class HabanaLM(HFLM):
     Extra model_args:
         buckets: Optional[int] = [16, 32, 64, 128, 189, 284, 384],
         use_kv_cache: Optional[bool] = True,
-        trim_logits: Optional[bool] = False,
-        attn_softmax_bf16: Optional[bool] = True,
-        bucket_internal: Optional[bool] = True,
-        limit_hpu_graphs: Optional[bool] = True,
-        clear_hpu_graphs_cache: Optional[bool] = True,
         reuse_cache: Optional[bool] = True,
-        reduce_recompile: Optional[bool] = False,
-        use_flex_attention: Optional[bool] = True,
-        use_flash_attention: Optional[bool] = True,
-        flash_attention_recompute: Optional[bool] = True,
-        flash_attention_causal_mask: Optional[bool] = True,
-        flash_attention_fast_softmax: Optional[bool] = True,
-        sdp_on_bf16: Optional[bool] = False,
-        attn_batch_split: Optional[int] = 1,
-        ignore_eos: Optional[bool] = False
 
     Default execution mode is Eager, if you prefer Lazy, add PT_HPU_LAZY_MODE=1 before lm_eval
     """
@@ -93,58 +79,30 @@ class HabanaLM(HFLM):
         bs, seq_length = inps.shape
         padding_length = 0
         # Add padding at bucketing length
-        if self.options.static_shapes:
-            bucket_length = self.find_bucket(seq_length)
-            if self.options.use_cache and self.options.reuse_cache:
-                self._model.allocate_kv_cache(bs, bucket_length + 1, bucket_length)
-            padding_length = bucket_length - seq_length
-            pad_token_id = getattr(self._model.config, "pad_token_id", 0)
-            inps = F.pad(inps, (0, padding_length), value=pad_token_id)
-            eval_logger.debug(
-                f"Padded input from {seq_length} to {bucket_length} (pad={padding_length})"
-            )
+        bucket_length = self.find_bucket(seq_length)
+        if self.options.use_cache and self.options.reuse_cache:
+            self._model.allocate_kv_cache(bs, bucket_length + 1, bucket_length)
+        padding_length = bucket_length - seq_length
+        pad_token_id = getattr(self._model.config, "pad_token_id", 0)
+        inps = F.pad(inps, (0, padding_length), value=pad_token_id)
+        eval_logger.debug(
+            f"Padded input from {seq_length} to {bucket_length} (pad={padding_length})"
+        )
         logits = super()._model_call(inps)
 
-        if self.options.static_shapes and padding_length > 0:
+        if padding_length > 0:
             logits = logits[:, :-padding_length, :]
         return logits
 
     def setup_generation_config_gaudi(self, **kwargs):
         """
-        Add to the model config Intel Gaudi specific args.
+        Add to the model config Intel Gaudi specific args - a subset.
         """
         from optimum.habana.transformers.generation import GaudiGenerationConfig
 
-        generation_config = GaudiGenerationConfig()  # copy.deepcopy(self.config)
+        generation_config = GaudiGenerationConfig()
         generation_config.use_cache = kwargs.pop("use_kv_cache", True)
-        generation_config.static_shapes = True
-        generation_config.bucket_size = self.buckets
-        generation_config.bucket_internal = kwargs.pop("bucket_internal", True)
-        generation_config.trim_logits = kwargs.pop("trim_logits", False)
-        generation_config.attn_softmax_bf16 = kwargs.pop("attn_softmax_bf16", True)
-        generation_config.reduce_recompile = kwargs.pop("reduce_recompile", False)
-        if generation_config.reduce_recompile:
-            assert generation_config.bucket_size > 0
-        generation_config.valid_sequence_lengths = None
-        generation_config.attn_batch_split = kwargs.pop("attn_batch_split", 1)
-        generation_config.limit_hpu_graphs = kwargs.pop("limit_hpu_graphs", True)
-        generation_config.sdp_on_bf16 = kwargs.pop("sdp_on_bf16", False)
-        generation_config.clear_hpu_graphs_cache = kwargs.pop(
-            "clear_hpu_graphs_cache", True
-        )
-        generation_config.use_flex_attention = kwargs.pop("use_flex_attention", True)
-        generation_config.use_flash_attention = kwargs.pop("use_flash_attention", True)
-        generation_config.flash_attention_recompute = kwargs.pop(
-            "flash_attention_recompute", True
-        )
-        generation_config.flash_attention_causal_mask = kwargs.pop(
-            "flash_attention_causal_mask", True
-        )
-        generation_config.flash_attention_fast_softmax = kwargs.pop(
-            "flash_attention_fast_softmax", True
-        )
         generation_config.reuse_cache = kwargs.pop("reuse_cache", True)
-        generation_config.ignore_eos = kwargs.pop("ignore_eos", False)
         return generation_config, kwargs
 
     def _create_model(self, *args, **kwargs) -> None:
@@ -195,23 +153,20 @@ class HabanaLM(HFLM):
             generation_kwargs.pop("temperature")
 
         max_gen_toks = max_length - context.shape[1]
+        bucket_length = self.find_bucket(context.shape[1])
+        padding_length = bucket_length - context.shape[1]
 
-        if self.options.static_shapes:
-            self.options.bucket_internal = True
-            bucket_length = self.find_bucket(context.shape[1])
-            padding_length = bucket_length - context.shape[1]
-
-            if padding_length > 0:
-                max_gen_toks = max(1, max_gen_toks)
-                if self.lazy_mode:
-                    context = F.pad(
-                        context, (0, padding_length), value=self.tokenizer.pad_token_id
-                    )
-                    generation_kwargs["attention_mask"] = F.pad(
-                        generation_kwargs["attention_mask"],
-                        (0, padding_length),
-                        value=0,
-                    )
+        if padding_length > 0:
+            max_gen_toks = max(1, max_gen_toks)
+            if self.lazy_mode:
+                context = F.pad(
+                    context, (0, padding_length), value=self.tokenizer.pad_token_id
+                )
+                generation_kwargs["attention_mask"] = F.pad(
+                    generation_kwargs["attention_mask"],
+                    (0, padding_length),
+                    value=0,
+                )
         context = context.to(self.device)
         generation_kwargs["attention_mask"] = generation_kwargs["attention_mask"].to(
             self.device
